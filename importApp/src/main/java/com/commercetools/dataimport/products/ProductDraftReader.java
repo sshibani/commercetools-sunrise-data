@@ -63,6 +63,7 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
     private TaxCategory taxCategory;
     private CategoryTree categoryTree;
     private static final Pattern pricePattern = Pattern.compile("(?:(?<country>\\w{2})-)?(?<currency>\\w{3}) (?<centAmount>\\d{1,})(?:[|]\\d{1,})?(?:[ ](?<customerGroup>\\w\\p{Alnum}+))?$");
+    private boolean searchedLastVariantCreated = false;
 
     public ProductDraftReader(final Resource attributeDefinitionsCsvResource, final int maxProducts, final BlockingSphereClient sphereClient) {
         currentProducts = this.processedProductsAmount(sphereClient);
@@ -81,7 +82,6 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
         reader.setLineMapper(fullLineMapper);
         reader.setLinesToSkip(1);
         this.delegate = reader;
-
     }
 
     private int processedProductsAmount(final BlockingSphereClient sphereClient) {
@@ -98,12 +98,10 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
     }
 
     private ProductDraft readDelegate() throws Exception {
-
-        //INI RETRIEVE RESTART LINE
-        iterateUntilLineOfLastCreatedVariant();
-
-        //END RETRIEVE RESTART LINE
-
+        if (!searchedLastVariantCreated) {
+            iterateUntilLineOfLastCreatedVariant();
+            searchedLastVariantCreated = true;
+        }
 
         ProductDraftBuilder entry = null;
         FieldSet currentLine = null;
@@ -276,9 +274,9 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
                 }
                 return foundCat;
             })
-            .filter(x -> x != null)
-            .map(c -> c.toReference())
-            .collect(toSet());
+                    .filter(x -> x != null)
+                    .map(c -> c.toReference())
+                    .collect(toSet());
         } else {
             categoriesSet = Collections.emptySet();
         }
