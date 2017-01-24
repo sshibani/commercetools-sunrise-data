@@ -14,6 +14,7 @@ import io.sphere.sdk.models.Reference;
 import io.sphere.sdk.models.ResourceIdentifier;
 import io.sphere.sdk.products.*;
 import io.sphere.sdk.products.attributes.*;
+import io.sphere.sdk.products.queries.ProductQuery;
 import io.sphere.sdk.producttypes.ProductType;
 import io.sphere.sdk.producttypes.queries.ProductTypeQuery;
 import io.sphere.sdk.search.SearchKeyword;
@@ -46,9 +47,7 @@ import java.util.stream.Stream;
 import static io.sphere.sdk.client.SphereClientUtils.blockingWait;
 import static io.sphere.sdk.queries.QueryExecutionUtils.queryAll;
 import static java.util.Arrays.asList;
-import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toMap;
-import static java.util.stream.Collectors.toSet;
+import static java.util.stream.Collectors.*;
 import static org.apache.commons.lang3.StringUtils.isEmpty;
 import static org.apache.commons.lang3.StringUtils.isNotEmpty;
 
@@ -66,12 +65,13 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
     private static final Pattern pricePattern = Pattern.compile("(?:(?<country>\\w{2})-)?(?<currency>\\w{3}) (?<centAmount>\\d{1,})(?:[|]\\d{1,})?(?:[ ](?<customerGroup>\\w\\p{Alnum}+))?$");
 
     public ProductDraftReader(final Resource attributeDefinitionsCsvResource, final int maxProducts, final BlockingSphereClient sphereClient) {
+        currentProducts = this.processedProductsAmount(sphereClient);
         this.attributeDefinitionsCsvResource = attributeDefinitionsCsvResource;
         this.maxProducts = maxProducts;
         this.sphereClient = sphereClient;
         final DefaultLineMapper<FieldSet> fullLineMapper = new DefaultLineMapper<FieldSet>() {{
             setLineTokenizer(new DelimitedLineTokenizer() {{
-                setNames(new String[]{"productType","variantId","id","sku","prices","tax","categories","images","name.de","name.en","description.de","description.en","slug.de","slug.en","metaTitle.de","metaTitle.en","metaDescription.de","metaDescription.en","metaKeywords.de","metaKeywords.en","searchKeywords.de","searchKeywords.en","creationDate","articleNumberManufacturer","articleNumberMax","matrixId","baseId","designer","madeInItaly","completeTheLook","commonSize","size","color","colorFreeDefinition.de","colorFreeDefinition.en","details.de","details.en","style","gender","season","isOnStock","isLook","lookProducts","seasonNew"});
+                setNames(new String[]{"productType", "variantId", "id", "sku", "prices", "tax", "categories", "images", "name.de", "name.en", "description.de", "description.en", "slug.de", "slug.en", "metaTitle.de", "metaTitle.en", "metaDescription.de", "metaDescription.en", "metaKeywords.de", "metaKeywords.en", "searchKeywords.de", "searchKeywords.en", "creationDate", "articleNumberManufacturer", "articleNumberMax", "matrixId", "baseId", "designer", "madeInItaly", "completeTheLook", "commonSize", "size", "color", "colorFreeDefinition.de", "colorFreeDefinition.en", "details.de", "details.en", "style", "gender", "season", "isOnStock", "isLook", "lookProducts", "seasonNew"});
                 setStrict(false);
             }});
             setFieldSetMapper(new PassThroughFieldSetMapper());
@@ -82,7 +82,11 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
         reader.setLinesToSkip(1);
         this.delegate = reader;
 
-       }
+    }
+
+    private int processedProductsAmount(final BlockingSphereClient sphereClient) {
+        return sphereClient.executeBlocking(ProductQuery.of()).getTotal().intValue();
+    }
 
     @Override
     public ProductDraft read() throws Exception {
@@ -94,6 +98,13 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
     }
 
     private ProductDraft readDelegate() throws Exception {
+
+        //INI RETRIEVE RESTART LINE
+        iterateUntilLineOfLastCreatedVariant();
+
+        //END RETRIEVE RESTART LINE
+
+
         ProductDraftBuilder entry = null;
         FieldSet currentLine = null;
         do {
@@ -113,6 +124,36 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
             }
         } while (currentLine != null && entry == null);
         return entry != null ? entry.build() : null;
+    }
+
+    private void iterateUntilLineOfLastCreatedVariant() throws Exception {
+        final ProductQuery productQuery = ProductQuery.of()
+                .withSort(m -> m.createdAt().sort().desc());
+        final Optional<Product> optionalLastCreatedProduct = sphereClient.executeBlocking(productQuery).head();
+        if (optionalLastCreatedProduct.isPresent()) {
+            final ProductData masterDataOptionalProduct = optionalLastCreatedProduct.get().getMasterData().getCurrent();
+            final String sku = masterDataOptionalProduct.getMasterVariant().getSku();
+            iterateUntilLineOfLastCreatedProduct(sku);
+            final int numberOfProductVariants = masterDataOptionalProduct.getVariants().size();
+            for (int i = 0; i < numberOfProductVariants; i++) {
+                delegate.read();
+            }
+        }
+    }
+
+    private void iterateUntilLineOfLastCreatedProduct(final String sku) throws Exception {
+        ProductDraftBuilder newEntry = null;
+        FieldSet currentLine;
+        do {
+            currentLine = delegate.read();
+            if (currentLine != null) {
+                if (isNewEntry(currentLine)) {
+                    newEntry = createNewEntry(currentLine);
+                } else {
+                    continue;
+                }
+            }
+        } while (!newEntry.getMasterVariant().getSku().equals(sku));
     }
 
     private ProductVariantDraftBuilder createNewVariantDraftBuilder(final FieldSet currentLine, final String productTypeKey) throws BindException {
@@ -148,7 +189,7 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
                     if (attributeType instanceof DateTimeAttributeType || attributeType instanceof StringAttributeType || attributeType instanceof EnumAttributeType || attributeType instanceof LocalizedEnumAttributeType) {
                         final String value = properties.getProperty(name, null);
                         return isEmpty(value) ? null : AttributeDraft.of(name, value);
-                    } else if(attributeType instanceof LocalizedStringAttributeType) {
+                    } else if (attributeType instanceof LocalizedStringAttributeType) {
                         final LocalizedString localizedString = createStreamOfLocalizedStringNames(currentLine, name)
                                 .map(columnName -> {
                                     final String nullableValue = properties.getProperty(columnName);
@@ -161,7 +202,7 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
                                 .filter(x -> x != null)
                                 .collect(LocalizedString.streamCollector());
                         return AttributeDraft.of(name, localizedString);
-                    } else if(attributeType instanceof SetAttributeType) {
+                    } else if (attributeType instanceof SetAttributeType) {
                         final SetAttributeType setAttributeType = (SetAttributeType) attributeType;
                         final AttributeType elementType = setAttributeType.getElementType();
                         if (elementType instanceof StringAttributeType) {
@@ -176,12 +217,13 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
                                         } else {
                                             return null;
                                         }
-                                    }).forEach(s -> {});
+                                    }).forEach(s -> {
+                            });
                             return null;
                         } else {
                             throw new RuntimeException("unknown element type of attribute type " + attributeType);
                         }
-                    } else if(attributeType instanceof BooleanAttributeType) {
+                    } else if (attributeType instanceof BooleanAttributeType) {
                         final String value = properties.getProperty(name);
                         return isEmpty(value) ? null : AttributeDraft.of(name, Boolean.valueOf(value));
                     } else {
@@ -269,10 +311,10 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
 
     private List<PriceDraft> parsePricesLine(final String pricesLine) {
         return asList(pricesLine.split(";"))
-                    .stream()
-                    .filter(s -> !StringUtils.isEmpty(s))
-                    .map((String priceString) -> parsePriceString(priceString))
-                    .collect(toList());
+                .stream()
+                .filter(s -> !StringUtils.isEmpty(s))
+                .map((String priceString) -> parsePriceString(priceString))
+                .collect(toList());
     }
 
     private ProductsCsvEntry mapLineToEntry(final FieldSet currentLine) throws BindException {
@@ -282,10 +324,10 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
 
     private FieldSetMapper<ProductsCsvEntry> getProductsCsvEntryFieldSetMapper() {
         return new BeanWrapperFieldSetMapper<ProductsCsvEntry>() {{
-                setDistanceLimit(3);
-                setTargetType(ProductsCsvEntry.class);
-                setStrict(false);
-            }};
+            setDistanceLimit(3);
+            setTargetType(ProductsCsvEntry.class);
+            setStrict(false);
+        }};
     }
 
     private PriceDraft parsePriceString(final String priceString) {
@@ -300,8 +342,8 @@ public class ProductDraftReader implements ItemStreamReader<ProductDraft> {
 
         final Reference<CustomerGroup> customerGroup =
                 (!isEmpty(nullableCustomerGroup) && "b2b".equals(nullableCustomerGroup))
-                ? b2bCustomerGroupReference()
-                : null;
+                        ? b2bCustomerGroupReference()
+                        : null;
         return PriceDraft.of(MoneyImpl.ofCents(Long.parseLong(centAmount), currencyCode))
                 .withCountry(nullableCountryCode == null ? null : CountryCode.valueOf(nullableCountryCode))
                 .withCustomerGroup(customerGroup);
