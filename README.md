@@ -66,6 +66,7 @@ Before starting the import, make sure you have access to the [Admin Center](http
 2. Go to [Product Type import](https://impex.commercetools.com/commands/product-type-import) and drop the file [product-type-template.csv](https://raw.githubusercontent.com/commercetools/commercetools-sunrise-data/master/data/producttypes/product-type-template.csv) on "Product Type template as CSV" and [product-type-attributes.csv](https://raw.githubusercontent.com/commercetools/commercetools-sunrise-data/master/data/producttypes/product-type-attributes.csv) on "Product Type attributes as CSV", then run. 
 3. Go to [Product import](https://impex.commercetools.com/commands/product-import) and drop the file [products.csv](https://raw.githubusercontent.com/commercetools/commercetools-sunrise-data/master/data/products/products.csv), enable "Publish all changes immediately" and then run.
 4. Go to [Stock import](https://impex.commercetools.com/commands/stock-import) and drop the file [inventory.csv](https://raw.githubusercontent.com/commercetools/commercetools-sunrise-data/master/data/inventory/inventory.csv), then run.
+5. Go to [Discount Code Import](https://impex.commercetools.com/commands/discount-code-import) and drop the file [discount-codes.csv](https://raw.githubusercontent.com/commercetools/commercetools-sunrise-data/master/data/discountcodes/discount-codes.csv), then run.
 
 ### 4. Import orders
 
